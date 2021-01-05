@@ -70,6 +70,9 @@ class FaceMasker:
 
         return np.array(image_face)
 
+    # TODO: Create a add_new_mask function tool.
+    # TODO: Create a wear_glasses_to_face function tool.
+
 
 if __name__ == '__main__':
     import dlib

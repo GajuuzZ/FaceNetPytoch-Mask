@@ -1,4 +1,4 @@
-#FaceNet Pytorch Trainer with Mask Augmentation
+# **FaceNet Pytorch Trainer with Mask Augmentation**
 
 
 
