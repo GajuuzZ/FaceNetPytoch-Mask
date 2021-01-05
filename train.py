@@ -21,9 +21,9 @@ import seaborn as sb
 SAVE_FOLDER = './Saved_CombineLosser/IRN1_tanhnorm_SGD-StepLR_freezed'
 CHECKPOINT_FILE = os.path.join(SAVE_FOLDER, 'model-checkpoint.tar')
 
-TRAIN_FOLDER = '../Data/CASIA-masked'
-LFW_FOLDER = '../Data/LFW/lfw-masked'
-LFW_PAIRSFILE = '../Data/LFW/LFW_pairs.txt'
+TRAIN_FOLDER = './Data/CASIA-masked'
+LFW_FOLDER = './Data/LFW/lfw-masked'
+LFW_PAIRSFILE = './Data/LFW/LFW_pairs.txt'
 
 EPOCHS = 20
 BATCH_SIZE = 32
