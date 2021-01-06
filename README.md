@@ -32,4 +32,5 @@ FaceNet pre-trained on CASIA-webface
 
 <p align="left">
   <img src="./doc/face_landmark.png">
+  <img src="./doc/mask_landmark.png">
 </p>
