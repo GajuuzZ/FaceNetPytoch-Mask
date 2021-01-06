@@ -28,6 +28,19 @@ Face shape 68 predictor
 FaceNet pre-trained on CASIA-webface
 - [20180408-102900](https://drive.google.com/uc?export=download&id=12DYdlLesBl3Kk51EtJsyPS8qA7fErWDX)
 
+## Dataset
+
+For training use CASIA-webface or any face dataset to train.
+- Since the homepage has gone I can't provide a link, But there a lot other link on the internet.
+
+For evaluation use LFW and [LFW_pairs.txt](./Data/LFW/LFW_pairs.txt) as test data.
+- [lfw-deepfunneling](http://vis-www.cs.umass.edu/lfw/lfw-deepfunneled.tgz)
+
+Create masked face dataset on both train and test data.
+  
+    ./create_masked_face_dataset.py
+**Edit the path in code.
+
 ## How to wear a mask
 
 <div align="center">
@@ -37,3 +50,20 @@ FaceNet pre-trained on CASIA-webface
 <div align="center">
   <img src="./doc/masked_face.png" width="600">
 </div>
+
+Use face detection and face shape to get face landmark select the triangle pieces coordinate to warp the correlate
+pieces on the mask image to put into the face image.
+
+As for the triangular piece selection process, it is a manual process. If you want to edit or add new mask image
+you need to select the face landmark point index and (x, y) position on mask image then add to FaceMasking.py code.
+
+## Evaluation
+
+<div align="center">
+  <img src="./doc/lfw-withmask_ep-5.png">
+</div>
+
+Histogram distribution of distance prediction of masked LFW face pairs data. (blue is the distance of the same person's 
+face pair, red is the distance of the different person's face pair).
+
+Note: This is not the best model. training on CASIA-webface used a lot of time, So I didn't do many tests on this model.
