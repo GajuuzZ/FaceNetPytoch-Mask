@@ -30,10 +30,10 @@ FaceNet pre-trained on CASIA-webface
 
 ## How to wear a mask
 
-<p align="left">
+<div align="left">
   <img src="./doc/face_landmark.png" width="400">
   <img src="./doc/mask_landmark.png" width="400">
-</p>
+</div>
 <div align="center">
   <img src="./doc/masked_face.png" width="600">
 </div>
