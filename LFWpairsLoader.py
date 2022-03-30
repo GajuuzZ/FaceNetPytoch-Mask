@@ -14,11 +14,11 @@ class LFWDataset:
         {main_folder}/{class_name}/{class_name}_{%04d}_{w/o|suffix}.ext
     """
     def __init__(self, lfw_folder, pairs_file, image_size=160, transform=None,
-                 masking=False, mask_suffix='_mask-'):
+                 mask=False, mask_suffix='_mask-'):
         self.data_folder = lfw_folder
         self.pairs_file = pairs_file
         self.image_size = (image_size, image_size)
-        self.mask = masking
+        self.mask = mask
         self.suffix = mask_suffix
 
         self.transform = transform
@@ -27,10 +27,10 @@ class LFWDataset:
     def __len__(self):
         return len(self.path_list)
 
-    def add_extension(self, path):
+    def add_extension(self, path, mask=False):
         for i in range(1, 3):
             path_ = path
-            if self.mask:
+            if mask:
                 path_ = path_ + self.suffix + str(i)
 
             if os.path.exists(path_ + '.jpg'):
@@ -46,7 +46,7 @@ class LFWDataset:
             for line in f.readlines()[1:]:
                 pair = line.strip().split()
                 pairs.append(pair)
-        pairs = np.array(pairs)
+        #pairs = np.array(pairs)
 
         nrof_skipped_pairs = 0
         path_list = []
@@ -101,4 +101,23 @@ class LFWDataset:
 
         fig.suptitle('Same' if issame else 'Not Same')
         plt.show()
+
+
+if __name__ == '__main__':
+    import torchvision.transforms as transforms
+    from torch.utils import data
+
+    LFW_FOLDER = '../Data/LFW/lfw-masked'
+    PAIRS_FILE = '../Data/LFW/LFW_pairs.txt'
+
+    transforms_fn = transforms.Compose([transforms.ToTensor()])
+
+    dataset = LFWDataset(LFW_FOLDER, PAIRS_FILE, mask=False, transform=transforms_fn)
+    data_loader = data.DataLoader(
+        dataset=dataset,
+        batch_size=16,
+        num_workers=2,
+        shuffle=True
+    )
+
 

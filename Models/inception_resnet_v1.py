@@ -180,8 +180,6 @@ class InceptionResnetV1(nn.Module):
             tmp_classes = 10575
         elif pretrained is None and self.num_classes is None:
             raise Exception('At least one of "pretrained" or "num_classes" must be specified')
-        else:
-            tmp_classes = self.num_classes
 
         # Define layers
         self.conv2d_1a = BasicConv2d(3, 32, kernel_size=3, stride=2)
@@ -229,8 +227,8 @@ class InceptionResnetV1(nn.Module):
         if pretrained is not None:
             load_weights(self, pretrained)
 
-        if self.num_classes is not None:
-            self.logits = nn.Linear(512, self.num_classes)
+        if num_classes is not None:
+            self.logits = nn.Linear(512, num_classes)
 
         self.device = torch.device('cpu')
         if device is not None:
@@ -279,7 +277,8 @@ def load_weights(mdl, name):
         ValueError: If 'pretrained' not equal to 'vggface2' or 'casia-webface'.
     """
     if name == 'vggface2':
-        raise NotImplemented
+        weights_path = './models/20180402-114759-vggface2.pt'
+        state_dict = torch.load(weights_path)
     elif name == 'casia-webface':
         weights_path = './models/20180408-102900-casia-webface.pt'
         state_dict = torch.load(weights_path)
@@ -289,7 +288,22 @@ def load_weights(mdl, name):
     else:
         raise ValueError('Pretrained models only exist for "vggface2" and "casia-webface"')
 
-    mdl.load_state_dict(state_dict)
+    if not mdl.classify:
+        old_state_dict = mdl.state_dict()
+        for name, param in state_dict.items():
+            if name in ['logits.weight', 'logits.bias']:
+                continue
+            if name not in old_state_dict:
+                continue
+            if isinstance(param, nn.Parameter):
+                param = param.data
+            if old_state_dict[name].shape != param.shape:
+                raise TypeError('Can not load state dict in layer: {} not in the same shape!'.format(name))
+            old_state_dict[name].copy_(param)
+
+        mdl.load_state_dict(old_state_dict)
+    else:
+        mdl.load_state_dict(state_dict)
 
 
 def fixed_image_standardization(image_tensor):

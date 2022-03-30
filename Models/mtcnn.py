@@ -336,32 +336,33 @@ class MTCNN(nn.Module):
             )
 
         boxes, probs, points = [], [], []
-        for box, point in zip(batch_boxes, batch_points):
-            box = np.array(box)
-            point = np.array(point)
-            if len(box) == 0:
-                boxes.append(None)
-                probs.append([None])
-                points.append(None)
-            elif self.select_largest:
-                box_order = np.argsort((box[:, 2] - box[:, 0]) * (box[:, 3] - box[:, 1]))[::-1]
-                box = box[box_order]
-                point = point[box_order]
-                boxes.append(box[:, :4])
-                probs.append(box[:, 4])
-                points.append(point)
-            else:
-                boxes.append(box[:, :4])
-                probs.append(box[:, 4])
-                points.append(point)
-        boxes = np.array(boxes)
-        probs = np.array(probs)
-        points = np.array(points)
+        if len(batch_boxes) > 0:
+            for box, point in zip(batch_boxes, batch_points):
+                box = np.array(box)
+                point = np.array(point)
+                if len(box) == 0:
+                    boxes.append(None)
+                    probs.append([None])
+                    points.append(None)
+                elif self.select_largest:
+                    box_order = np.argsort((box[:, 2] - box[:, 0]) * (box[:, 3] - box[:, 1]))[::-1]
+                    box = box[box_order]
+                    point = point[box_order]
+                    boxes.append(box[:, :4])
+                    probs.append(box[:, 4])
+                    points.append(point)
+                else:
+                    boxes.append(box[:, :4])
+                    probs.append(box[:, 4])
+                    points.append(point)
+            boxes = np.array(boxes)
+            probs = np.array(probs)
+            points = np.array(points)
 
-        if not isinstance(img, (list, tuple)) and not (isinstance(img, np.ndarray) and len(img.shape) == 4):
-            boxes = boxes[0]
-            probs = probs[0]
-            points = points[0]
+            if not isinstance(img, (list, tuple)) and not (isinstance(img, np.ndarray) and len(img.shape) == 4):
+                boxes = boxes[0]
+                probs = probs[0]
+                points = points[0]
 
         if landmarks:
             return boxes, probs, points

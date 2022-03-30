@@ -59,7 +59,7 @@ class MTCNNFaceDetector:
         res = None
         shp = None
         faces, _, pts = self.detector.detect(Image.fromarray(image), landmarks=True)
-        if faces is not None:
+        if faces is not None and len(faces) > 0:
             if get_largest:
                 faces = [faces[0]]
 
@@ -95,7 +95,7 @@ class MTCNNFaceDetector:
         res = None
         shp = None
         _, _, pts = self.detector.detect(Image.fromarray(image), landmarks=True)
-        if pts is not None:
+        if pts is not None and len(pts) > 0:
             if get_largest:
                 pts = [pts[0]]
 

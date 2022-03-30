@@ -9,31 +9,173 @@ from tqdm import tqdm
 from shutil import copyfile
 from torch.utils import data
 
-from Criterions import CombinedLoss
-from FaceTripletsLoader import FaceTripletsSet, FaceTriplets
-from LFWpairsLoader import LFWDataset, LFWMaskedDataset
+from augmentation import face_augment_pipe
+from FaceMasking import AugmentMasking
+from FaceTripletsLoader import FaceTriplets
+from LFWpairsLoader import LFWDataset
 from Models.inception_resnet_v1 import InceptionResnetV1
+from Criterions import CombinedLoss
 from evaluate_LFW import evaluate_lfw
 
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sb
 
-SAVE_FOLDER = './Saved_CombineLosser/IRN1_tanhnorm_SGD-StepLR_freezed'
+SAVE_FOLDER = './Experiments2/IRN1-freezed-5_combine_Adam1e4_mc025'
 CHECKPOINT_FILE = os.path.join(SAVE_FOLDER, 'model-checkpoint.tar')
 
-TRAIN_FOLDER = './Data/CASIA-masked'
-LFW_FOLDER = './Data/LFW/lfw-masked'
-LFW_PAIRSFILE = './Data/LFW/LFW_pairs.txt'
+TRAIN_FOLDER = ['../Data/CASIA-WebFace', '../Data/RMFD/AFDB_face_dataset']
+VALID_FOLDER = '../Data/LFW/lfw-masked'
+PAIRS_FILE = '../Data/LFW/LFW_pairs.txt'
+
+PRETRAINED = 'vggface2'
+IMAGE_SIZE = 160
 
 EPOCHS = 20
 BATCH_SIZE = 32
 MARGIN = 0.5
+MASK_CHANCE = 0.25
+MASK_PTS_FILE = './mask_images/mask_pts.pkl'
 
 
-def train(model, dataloader, criterion, optimizer, scheduler, distancer):
+def main():
+    torch.backends.cudnn.benchmark = True
+
+    transforms_fn = transforms.Compose([transforms.ToTensor(),
+                                        transforms.Normalize(
+                                            mean=[0.5, 0.5, 0.5],
+                                            std=[0.5, 0.5, 0.5])
+                                        ])
+
+    train_loader = data.DataLoader(
+        dataset=FaceTriplets(TRAIN_FOLDER, image_size=IMAGE_SIZE,
+                             augment=AugmentMasking(mask_chance=MASK_CHANCE,
+                                                    post_augment=None,
+                                                    mask_pts_file=MASK_PTS_FILE),
+                             transform=transforms_fn),
+        batch_size=BATCH_SIZE,
+        num_workers=5,
+        shuffle=True
+    )
+    num_classes = len(train_loader.dataset.data['class'].unique())
+
+    valid_mask_loader = data.DataLoader(
+        dataset=LFWDataset(VALID_FOLDER, PAIRS_FILE, image_size=IMAGE_SIZE,
+                           mask=True, transform=transforms_fn),
+        batch_size=BATCH_SIZE,
+        num_workers=2,
+        shuffle=False
+    )
+    valid_nomask_loader = data.DataLoader(
+        dataset=LFWDataset(VALID_FOLDER, PAIRS_FILE, image_size=IMAGE_SIZE,
+                           mask=False, transform=transforms_fn),
+        batch_size=BATCH_SIZE,
+        num_workers=2,
+        shuffle=False
+    )
+
+    model = InceptionResnetV1(PRETRAINED, classify=True, num_classes=num_classes, device='cuda')
+    # Freeze some layers.
+    for layer in list(model.children())[:-5]:
+        for p in layer.parameters():
+            p.requires_grad = False
+
+    #optimizer = optim.Adadelta(model.parameters())
+    optimizer = optim.Adam(model.parameters(), lr=1e-4, weight_decay=5e-6)
+    #optimizer = optim.SGD(model.parameters(), lr=1e-3, momentum=0.9)
+    #lr_scheduler = optim.lr_scheduler.CyclicLR(optimizer, base_lr=1e-5, max_lr=1e-3)
+    l2_distance = nn.PairwiseDistance(2.)
+
+    criterion = CombinedLoss(MARGIN)
+
+    loss_names = criterion._get_name()
+    loss_names = loss_names + ['total'] if isinstance(loss_names, list) else [loss_names]
+
+    loss_list = {ln: [] for ln in loss_names}
+    num_hard_triplets_list = []
+    num_has_mask = []
+    metric_list = {'mask': [], 'nomask': []}
+    start_epoch = 0
+    best_tar = 0
+    best_state = None
+
+    if os.path.exists(CHECKPOINT_FILE):
+        print('Continue training.')
+        state = torch.load(CHECKPOINT_FILE)
+        loss_list = state['loss_list']
+        num_hard_triplets_list = state['num_hard_triplets_list']
+        num_has_mask = state['num_has_mask']
+        metric_list = state['metric_list']
+        start_epoch = state['epoch']
+        best_tar = state['best_tar']
+        best_state = state['best_state']
+        model.load_state_dict(state['model_state_dict'])
+        optimizer.load_state_dict(state['optim_state_dict'])
+        #lr_scheduler.load_state_dict(state['lr_scheduler_state_dict'])
+
+    for e in range(start_epoch, EPOCHS):
+        print('Epoch {}/{}'.format(e, EPOCHS - 1))
+        ep_st = time.time()
+
+        # Train.
+        ep_loss, ep_num_hard_triplets, ep_num_has_mask = train(
+            model, train_loader, criterion, optimizer, l2_distance, loss_names)
+        txt = 'Train Avg Loss | '
+        for k, v in ep_loss.items():
+            loss_list[k].append(v)
+            txt += '{}: {:.4f},'.format(k, v)
+        num_hard_triplets_list.append(ep_num_hard_triplets)
+        num_has_mask.append(ep_num_has_mask)
+        print(txt)
+        print('Num of Hard-Triplets: {}'.format(ep_num_hard_triplets))
+        print('Num of has Masked: {}'.format(ep_num_has_mask))
+        print()
+
+        # Validate.
+        print('Evaluate with No-Mask.')
+        ep_metric = evaluate(model, valid_nomask_loader, l2_distance,
+                             title='LFW no mask ep: {}'.format(e),
+                             save=os.path.join(SAVE_FOLDER, 'lfw-nomask_ep-{}.png'.format(e)))
+        metric_list['nomask'].append(ep_metric)
+
+        print('Evaluate with Mask.')
+        ep_metric = evaluate(model, valid_mask_loader, l2_distance,
+                             title='LFW with mask ep: {}'.format(e),
+                             save=os.path.join(SAVE_FOLDER, 'lfw-withmask_ep-{}.png'.format(e)))
+        metric_list['mask'].append(ep_metric)
+
+        if ep_metric['tar'].mean() > best_tar:
+            best_tar = ep_metric['tar'].mean()
+            best_state = model.state_dict()
+
+        # Save.
+        state = {'epoch': e + 1,
+                 'loss_list': loss_list,
+                 'num_hard_triplets_list': num_hard_triplets_list,
+                 'num_has_mask': num_has_mask,
+                 'metric_list': metric_list,
+                 'best_tar': best_tar,
+                 'best_state': best_state,
+                 'model_state_dict': model.state_dict(),
+                 'optim_state_dict': optimizer.state_dict(),
+                 #'lr_scheduler_state_dict': lr_scheduler.state_dict()
+                 }
+        torch.save(state, os.path.join(SAVE_FOLDER, 'model-checkpoint.tar'))
+
+        #lr_scheduler.step()
+        #print('lr reduce to : {}'.format(optimizer.param_groups[0]['lr']))
+
+        ep_et = time.time() - ep_st
+        print('Epoch total-time used: %.0f h : %.0f m : %.0f s' %
+              (ep_et // 3600, ep_et // 60, ep_et % 60))
+
+
+def train(model, dataloader, criterion, optimizer, distancer, loss_names):
     model.train()
-    avg_loss = 0
+    avg_loss = {ln: 0 for ln in loss_names}
     num_hard_triplets = 0
+    num_has_mask = 0
     with tqdm(dataloader, desc='Training') as iterator:
         for i, batch in enumerate(iterator):
             model.zero_grad()
@@ -60,22 +202,43 @@ def train(model, dataloader, criterion, optimizer, scheduler, distancer):
             pos_emb = pos_emb[hard_triplets]
             neg_emb = neg_emb[hard_triplets]
 
-            loss = criterion(anc_emb, pos_emb, neg_emb,
-                             torch.cat([anc_lgt, pos_lgt, neg_lgt]),
-                             torch.cat([pos_cls, pos_cls, neg_cls]).cuda().squeeze())
+            # use same samples as triplet for cross-entropy.
+            anc_lgt = anc_lgt[hard_triplets]
+            pos_lgt = pos_lgt[hard_triplets]
+            neg_lgt = neg_lgt[hard_triplets]
+            pos_cls = pos_cls[hard_triplets]
+            neg_cls = neg_cls[hard_triplets]
 
-            avg_loss += loss.item()
-            num_hard_triplets += len(hard_triplets)
+            losses = criterion(anc_emb, pos_emb, neg_emb,
+                               torch.cat([anc_lgt, pos_lgt, neg_lgt]),
+                               torch.cat([pos_cls, pos_cls, neg_cls]).cuda().squeeze())
+            txt = ''
+            if isinstance(losses, tuple):
+                loss = 0
+                for j, ls in enumerate(losses):
+                    loss += ls
+                    avg_loss[loss_names[j]] += ls.item()
+                    txt += '{}: {:.4f}, '.format(loss_names[j], ls.item())
+                txt += 'Total: {:.4f}'.format(loss.item())
+                loss.backward()
+            else:
+                avg_loss[loss_names[0]] += losses.item()
+                txt = '{}: {:.4f}'.format(loss_names[0], losses.item())
+                losses.backward()
 
-            loss.backward()
             optimizer.step()
-            scheduler.step()
 
-            iterator.set_postfix_str(' Loss: {:.4f}'.format(loss.item()))
+            num_hard_triplets += len(hard_triplets)
+            num_has_mask += batch['is_mask'][hard_triplets].sum()
+
+            iterator.set_postfix_str(txt)
             iterator.update()
 
-    avg_loss = 0 if num_hard_triplets == 0 else avg_loss / num_hard_triplets
-    return avg_loss, num_hard_triplets
+    for ln in avg_loss.keys():
+        avg_loss[ln] = 0 if num_hard_triplets == 0 else avg_loss[ln] / num_hard_triplets
+    if 'total' in loss_names:
+        avg_loss['total'] = sum([v for v in avg_loss.values()])
+    return avg_loss, num_hard_triplets, num_has_mask
 
 
 def get_lfw_distances(model, dataloader, distancer):
@@ -115,6 +278,7 @@ def evaluate(model, dataloader, distancer, title='', save=None):
             np.std(metrics['tar']),
             np.mean(metrics['far']))
     print(txt)
+    print()
 
     fig, axes = plt.subplots(1, 2)
     fig.suptitle(title, fontsize=15)
@@ -139,88 +303,8 @@ if __name__ == '__main__':
     if not os.path.exists(SAVE_FOLDER):
         os.makedirs(SAVE_FOLDER)
     copyfile('train.py', os.path.join(SAVE_FOLDER, 'train.py'))
+    copyfile('augmentation.py', os.path.join(SAVE_FOLDER, 'augmentation.py'))
+    copyfile('FaceMasking.py', os.path.join(SAVE_FOLDER, 'FaceMasking.py'))
+    copyfile('FaceTripletsLoader.py', os.path.join(SAVE_FOLDER, 'FaceTripletsLoader.py'))
 
-    transforms_fn = transforms.Compose([transforms.ToTensor(),
-                                        transforms.Normalize(
-                                            mean=[0.5, 0.5, 0.5],
-                                            std=[0.5, 0.5, 0.5]
-                                        )])
-    train_loader = data.DataLoader(
-        dataset=FaceTriplets(TRAIN_FOLDER, transform=transforms_fn),
-        batch_size=BATCH_SIZE,
-        num_workers=6,
-        shuffle=True
-    )
-    lfw_loader = data.DataLoader(
-        dataset=LFWDataset(LFW_FOLDER, LFW_PAIRSFILE, transform=transforms_fn),
-        batch_size=32,
-        num_workers=4,
-        shuffle=False
-    )
-    lfw_mask_loader = data.DataLoader(
-        dataset=LFWDataset(LFW_FOLDER, LFW_PAIRSFILE, mask=True, transform=transforms_fn),
-        batch_size=32,
-        num_workers=4,
-        shuffle=True
-    )
-
-    model = InceptionResnetV1('casia-webface', classify=True, device='cuda')
-    # Freeze some layers.
-    for layer in list(model.children())[:-5]:
-        for p in layer.parameters():
-            p.requires_grad = False
-
-    criterion = CombinedLoss(MARGIN)
-
-    #optimizer = optim.Adam(model.parameters(), lr=1e-4, weight_decay=5e-6)
-    optimizer = optim.SGD(model.parameters(), lr=1e-2, momentum=0.9)
-    lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=4, gamma=0.1)
-    l2_distance = nn.PairwiseDistance(2.)
-
-    loss_list = []
-    num_train_list = []
-    metric_list = []
-    start_epoch = 0
-    best_accuracy = 0
-
-    if os.path.exists(CHECKPOINT_FILE):
-        print('Continue training.')
-        state = torch.load(CHECKPOINT_FILE)
-        loss_list = state['loss_list']
-        num_train_list = state['num_train_list']
-        metric_list = state['metric_list']
-        start_epoch = state['epoch']
-        best_accuracy = state['best_accuracy']
-        model.load_state_dict(state['model_state_dict'])
-        optimizer.load_state_dict(state['optim_state_dict'])
-        lr_scheduler.load_state_dict(state['lr_scheduler_state_dict'])
-
-    for e in range(start_epoch, EPOCHS):
-        print('Epoch {}/{}'.format(e, EPOCHS - 1))
-        ep_st = time.time()
-
-        ep_loss, ep_num_train = train(model, train_loader, criterion, optimizer, lr_scheduler, l2_distance)
-        print('Epoch train loss avg: {:.4f}, Num train: {}'.format(ep_loss, ep_num_train))
-        loss_list.append(ep_loss)
-        num_train_list.append(ep_num_train)
-
-        ep_metric = evaluate(model, lfw_mask_loader, l2_distance,
-                             title='LFW with mask ep: {}'.format(e),
-                             save=os.path.join(SAVE_FOLDER, 'lfw-withmask_ep-{}.png'.format(e)))
-        metric_list.append(ep_metric)
-
-        if ep_metric['accuracy'].mean() > best_accuracy:
-            best_accuracy = ep_metric['accuracy'].mean()
-            state = {'epoch': e + 1,
-                     'loss_list': loss_list,
-                     'num_train_list': num_train_list,
-                     'metric_list': metric_list,
-                     'best_accuracy': best_accuracy,
-                     'model_state_dict': model.state_dict(),
-                     'optim_state_dict': optimizer.state_dict(),
-                     'lr_scheduler_state_dict': lr_scheduler.state_dict()}
-            torch.save(state, os.path.join(SAVE_FOLDER, 'model-checkpoint.tar'))
-
-        ep_et = time.time() - ep_st
-        print('Epoch total-time used: %.0f h : %.0f m : %.0f s' %
-              (ep_et // 3600, ep_et // 60, ep_et % 60))
+    main()

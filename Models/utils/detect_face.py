@@ -55,6 +55,9 @@ def detect_face(imgs, minsize, pnet, rnet, onet, threshold, factor, device):
         all_inds.append(all_i + image_inds_scale)
         all_i += batch_size
 
+    if len(boxes) == 0:
+        return [], []
+
     boxes = torch.cat(boxes, dim=0)
     image_inds = torch.cat(image_inds, dim=0).cpu()
     all_inds = torch.cat(all_inds, dim=0)
@@ -175,7 +178,7 @@ def generateBoundingBox(reg, probs, scale, thresh):
     reg = reg.permute(1, 0, 2, 3)
 
     mask = probs >= thresh
-    mask_inds = mask.nonzero()
+    mask_inds = mask.nonzero(as_tuple=False)
     image_inds = mask_inds[:, 0]
     score = probs[mask]
     reg = reg[:, mask].permute(1, 0)
@@ -215,7 +218,7 @@ def nms_numpy(boxes, scores, threshold, method):
         h = np.maximum(0.0, yy2 - yy1 + 1).copy()
 
         inter = w * h
-        if method is "Min":
+        if method == "Min":
             o = inter / np.minimum(area[i], area[idx])
         else:
             o = inter / (area[i] + area[idx] - inter)
